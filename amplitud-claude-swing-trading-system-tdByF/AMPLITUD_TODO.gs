@@ -10,8 +10,9 @@
  * 1. Crea un nuevo proyecto en Google Apps Script (script.google.com)
  * 2. Enlaza el proyecto a una hoja de Google Sheets
  * 3. Copia y pega todo este codigo
- * 4. Ejecuta setupAll() para inicializar el sistema
- * 5. Configura tus API keys en la hoja CONFIG
+ * 4. Recarga la hoja de Sheets (F5) para ver el menu "AMPLITUD"
+ * 5. Usa el menu AMPLITUD > Configuracion > Inicializar Sistema
+ * 6. Configura tus API keys en la hoja CONFIG
  *
  * FUNCIONES PRINCIPALES:
  * - setupAll(): Inicializa todo el sistema
@@ -19,6 +20,721 @@
  * - runHoldingsRefresh(): Actualiza holdings mensualmente
  * - testSingleEtf(etf): Prueba con un solo ETF
  */
+
+// ==================================================
+// SECCION 0: MENU PERSONALIZADO DE GOOGLE SHEETS
+// ==================================================
+
+/**
+ * Se ejecuta automaticamente al abrir la hoja de calculo.
+ * Crea el menu personalizado "AMPLITUD" en la barra de menus.
+ */
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+
+  ui.createMenu('📊 AMPLITUD')
+
+    // --- SUBMENU: CONFIGURACION ---
+    .addSubMenu(ui.createMenu('⚙️ Configuracion')
+      .addItem('🚀 Inicializar Sistema Completo', 'menuSetupAll')
+      .addSeparator()
+      .addItem('📋 Crear/Verificar Hojas', 'menuSetupSheets')
+      .addItem('🔧 Cargar Config por Defecto', 'menuSetupConfig')
+      .addItem('📈 Cargar ETFs Universo', 'menuSeedEtfs')
+      .addItem('📁 Crear Carpetas en Drive', 'menuSetupDrive')
+      .addItem('⏰ Configurar Triggers Automaticos', 'menuSetupTriggers')
+      .addSeparator()
+      .addItem('🔌 Probar Conexiones API', 'menuTestApis'))
+
+    .addSeparator()
+
+    // --- SUBMENU: EJECUCION ---
+    .addSubMenu(ui.createMenu('▶️ Ejecutar')
+      .addItem('🔄 Pipeline Diario Completo', 'menuRunDaily')
+      .addItem('🔒 Pipeline Diario (con bloqueo)', 'menuRunDailySafe')
+      .addSeparator()
+      .addItem('📊 Solo Calcular Breadth', 'menuComputeBreadth')
+      .addItem('📉 Solo Calcular Tecnicos', 'menuComputeTech')
+      .addItem('🎯 Solo Generar Senales', 'menuComputeSignals')
+      .addSeparator()
+      .addItem('📅 Ejecutar para Fecha Especifica...', 'menuRunForDate'))
+
+    .addSeparator()
+
+    // --- SUBMENU: HOLDINGS ---
+    .addSubMenu(ui.createMenu('🏢 Holdings')
+      .addItem('🔄 Actualizar Todos los Holdings', 'menuRefreshAllHoldings')
+      .addItem('📥 Actualizar Holdings de un ETF...', 'menuRefreshSingleHolding'))
+
+    // --- SUBMENU: PRECIOS ---
+    .addSubMenu(ui.createMenu('💹 Precios')
+      .addItem('📥 Descargar Precios (Todos)', 'menuFetchAllPrices')
+      .addItem('📥 Descargar Precio de un Ticker...', 'menuFetchSinglePrice'))
+
+    .addSeparator()
+
+    // --- SUBMENU: VISION (si esta habilitado) ---
+    .addSubMenu(ui.createMenu('👁️ Vision/Charts')
+      .addItem('📸 Descargar Imagenes Candidatos', 'menuDownloadImages')
+      .addItem('🔍 Analizar Imagenes con Vision', 'menuRunVision')
+      .addItem('🔄 Recalcular Senales con Vision', 'menuRecomputeWithVision'))
+
+    .addSeparator()
+
+    // --- SUBMENU: REPORTES ---
+    .addSubMenu(ui.createMenu('📋 Reportes')
+      .addItem('📊 Exportar Reporte Diario', 'menuExportReport')
+      .addItem('📈 Ver Senales ENTER de Hoy', 'menuShowEnterSignals')
+      .addItem('👀 Ver Senales WATCH de Hoy', 'menuShowWatchSignals')
+      .addSeparator()
+      .addItem('💰 Ver Estado del Budget', 'menuShowBudget')
+      .addItem('🏥 Ver Estado del Sistema', 'menuShowHealth'))
+
+    .addSeparator()
+
+    // --- SUBMENU: PRUEBAS ---
+    .addSubMenu(ui.createMenu('🧪 Pruebas')
+      .addItem('🔬 Probar ETF Individual...', 'menuTestSingleEtf')
+      .addItem('🏃 Dry Run (sin API calls)', 'menuRunDryRun'))
+
+    .addSeparator()
+
+    // --- SUBMENU: MANTENIMIENTO ---
+    .addSubMenu(ui.createMenu('🛠️ Mantenimiento')
+      .addItem('🗑️ Limpiar Logs', 'menuClearLogs')
+      .addItem('🧹 Limpiar Cache HTTP', 'menuClearCache')
+      .addItem('🔓 Liberar Lock de Ejecucion', 'menuReleaseLock')
+      .addSeparator()
+      .addItem('⚠️ Resetear TODAS las Hojas de Datos', 'menuResetDataSheets')
+      .addItem('🗑️ Eliminar Todos los Triggers', 'menuRemoveTriggers'))
+
+    // --- AYUDA ---
+    .addSeparator()
+    .addItem('❓ Ayuda / Instrucciones', 'menuShowHelp')
+    .addItem('ℹ️ Acerca de...', 'menuShowAbout')
+
+    .addToUi();
+}
+
+// ==================================================
+// FUNCIONES DEL MENU - CONFIGURACION
+// ==================================================
+
+function menuSetupAll() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '🚀 Inicializar Sistema',
+    '¿Deseas inicializar el sistema completo?\\n\\nEsto creara todas las hojas, configuracion por defecto, y probara las APIs.',
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response === ui.Button.YES) {
+    ui.alert('⏳ Procesando...', 'Esto puede tardar unos segundos. Espera el mensaje de confirmacion.', ui.ButtonSet.OK);
+
+    try {
+      const result = setupAll();
+
+      if (result.success) {
+        ui.alert('✅ Exito', 'Sistema inicializado correctamente.\\n\\nAhora configura tus API keys en la hoja CONFIG.', ui.ButtonSet.OK);
+      } else {
+        ui.alert('❌ Error', 'Hubo un problema: ' + result.error, ui.ButtonSet.OK);
+      }
+    } catch (e) {
+      ui.alert('❌ Error', 'Excepcion: ' + e.message, ui.ButtonSet.OK);
+    }
+  }
+}
+
+function menuSetupSheets() {
+  showProcessingAndRun('Creando hojas...', function() {
+    setupSheets();
+    return 'Hojas creadas/verificadas correctamente.';
+  });
+}
+
+function menuSetupConfig() {
+  showProcessingAndRun('Cargando configuracion...', function() {
+    setupDefaultConfig();
+    return 'Configuracion por defecto cargada.';
+  });
+}
+
+function menuSeedEtfs() {
+  showProcessingAndRun('Cargando ETFs...', function() {
+    seedEtfsUniverse();
+    return 'Universo de ETFs cargado.';
+  });
+}
+
+function menuSetupDrive() {
+  showProcessingAndRun('Creando carpetas en Drive...', function() {
+    setupDriveFolders();
+    return 'Carpetas de Drive creadas.';
+  });
+}
+
+function menuSetupTriggers() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '⏰ Configurar Triggers',
+    '¿Deseas configurar los triggers automaticos?\\n\\n- runDaily: Diario a las 17:30\\n- runHoldingsRefresh: Mensual dia 1',
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response === ui.Button.YES) {
+    setupTriggers();
+    ui.alert('✅ Exito', 'Triggers configurados correctamente.', ui.ButtonSet.OK);
+  }
+}
+
+function menuTestApis() {
+  showProcessingAndRun('Probando conexiones API...', function() {
+    const results = warmUpTestCalls();
+    let msg = 'Resultados de las pruebas:\\n\\n';
+    msg += '• Yahoo Finance: ' + (results.yahoo.available ? '✅ OK' : '❌ ' + results.yahoo.message) + '\\n';
+    msg += '• Finnhub Candles: ' + (results.finnhubCandles.available ? '✅ OK' : '❌ ' + results.finnhubCandles.message) + '\\n';
+    msg += '• Finnhub Holdings: ' + (results.finnhubHoldings.available ? '✅ OK' : '❌ ' + results.finnhubHoldings.message) + '\\n';
+    msg += '• FMP: ' + (results.fmp.available ? '✅ OK' : '❌ ' + results.fmp.message);
+    return msg;
+  });
+}
+
+// ==================================================
+// FUNCIONES DEL MENU - EJECUCION
+// ==================================================
+
+function menuRunDaily() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '▶️ Ejecutar Pipeline Diario',
+    '¿Ejecutar el pipeline diario completo?\\n\\nEsto puede tardar varios minutos.',
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response === ui.Button.YES) {
+    ui.alert('⏳ Ejecutando...', 'El pipeline esta corriendo. Por favor espera...\\n\\nPuedes ver el progreso en la hoja LOG.', ui.ButtonSet.OK);
+
+    try {
+      const result = runDaily();
+
+      let msg = '📊 Resultado del Pipeline Diario:\\n\\n';
+      msg += '• Fecha: ' + result.date + '\\n';
+      msg += '• Holdings actualizados: ' + result.holdingsRefreshed + '\\n';
+      msg += '• Precios obtenidos: ' + result.pricesFetched + '\\n';
+      msg += '• Breadth calculado: ' + result.breadthComputed + '\\n';
+      msg += '• Tecnicos calculados: ' + result.techComputed + '\\n';
+      msg += '• Senales generadas: ' + result.signalsGenerated + '\\n';
+
+      if (result.errors.length > 0) {
+        msg += '\\n⚠️ Errores: ' + result.errors.join(', ');
+      }
+
+      ui.alert('✅ Completado', msg, ui.ButtonSet.OK);
+
+    } catch (e) {
+      ui.alert('❌ Error', 'Excepcion: ' + e.message, ui.ButtonSet.OK);
+    }
+  }
+}
+
+function menuRunDailySafe() {
+  const ui = SpreadsheetApp.getUi();
+
+  try {
+    const result = runDailySafe();
+
+    if (result.success === false && result.error === 'Lock not acquired') {
+      ui.alert('🔒 Bloqueado', 'Ya hay una ejecucion en curso. Intenta mas tarde.', ui.ButtonSet.OK);
+    } else {
+      ui.alert('✅ Completado', 'Pipeline ejecutado con bloqueo.', ui.ButtonSet.OK);
+    }
+  } catch (e) {
+    ui.alert('❌ Error', 'Excepcion: ' + e.message, ui.ButtonSet.OK);
+  }
+}
+
+function menuComputeBreadth() {
+  showProcessingAndRun('Calculando breadth...', function() {
+    const date = getTodayDateStr();
+    const result = computeAndStoreBreadthForAllEtfs(date);
+    return 'Breadth calculado para ' + result.success + ' ETFs.';
+  });
+}
+
+function menuComputeTech() {
+  showProcessingAndRun('Calculando tecnicos...', function() {
+    const date = getTodayDateStr();
+    const result = computeAndStoreEtfTechForAllEtfs(date);
+    return 'Tecnicos calculados para ' + result.success + ' ETFs.';
+  });
+}
+
+function menuComputeSignals() {
+  showProcessingAndRun('Generando senales...', function() {
+    const date = getTodayDateStr();
+    const result = computeAndStoreSignalsForAllEtfs(date);
+    return 'Senales generadas:\\n• ENTER: ' + result.enter + '\\n• WATCH: ' + result.watch + '\\n• NONE: ' + result.none;
+  });
+}
+
+function menuRunForDate() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.prompt(
+    '📅 Ejecutar para Fecha',
+    'Introduce la fecha en formato YYYY-MM-DD:',
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() === ui.Button.OK) {
+    const date = response.getResponseText().trim();
+
+    if (!date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      ui.alert('❌ Error', 'Formato de fecha invalido. Usa YYYY-MM-DD.', ui.ButtonSet.OK);
+      return;
+    }
+
+    showProcessingAndRun('Ejecutando para ' + date + '...', function() {
+      const result = runForDate(date);
+      return 'Pipeline ejecutado para ' + date + ':\\n• Breadth: ' + result.breadth.success + '\\n• Tech: ' + result.tech.success + '\\n• Signals: ' + result.signals.enter + ' ENTER, ' + result.signals.watch + ' WATCH';
+    });
+  }
+}
+
+// ==================================================
+// FUNCIONES DEL MENU - HOLDINGS
+// ==================================================
+
+function menuRefreshAllHoldings() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '🏢 Actualizar Holdings',
+    '¿Actualizar holdings de TODOS los ETFs?\\n\\nEsto puede consumir bastante cuota de API.',
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response === ui.Button.YES) {
+    showProcessingAndRun('Actualizando holdings...', function() {
+      const result = refreshAllHoldings();
+      return 'Holdings actualizados:\\n• Exito: ' + result.success + '\\n• Fallidos: ' + result.failed + '\\n• Total: ' + result.total;
+    });
+  }
+}
+
+function menuRefreshSingleHolding() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.prompt(
+    '📥 Actualizar Holdings de ETF',
+    'Introduce el simbolo del ETF (ej: XLK):',
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() === ui.Button.OK) {
+    const etf = response.getResponseText().trim().toUpperCase();
+
+    if (!etf) {
+      ui.alert('❌ Error', 'Debes introducir un simbolo de ETF.', ui.ButtonSet.OK);
+      return;
+    }
+
+    showProcessingAndRun('Actualizando holdings de ' + etf + '...', function() {
+      const result = refreshHoldings(etf);
+      if (result.success) {
+        return 'Holdings de ' + etf + ' actualizados: ' + result.holdings.length + ' posiciones.';
+      } else {
+        return 'Error: ' + result.error;
+      }
+    });
+  }
+}
+
+// ==================================================
+// FUNCIONES DEL MENU - PRECIOS
+// ==================================================
+
+function menuFetchAllPrices() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '💹 Descargar Precios',
+    '¿Descargar precios de todos los tickers?\\n\\nEsto puede tardar varios minutos y consume cuota de API.',
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response === ui.Button.YES) {
+    showProcessingAndRun('Descargando precios...', function() {
+      const tickers = buildTickerUniverse_();
+      const result = fetchAndStorePrices(tickers);
+      return 'Precios descargados:\\n• Exito: ' + result.success + '\\n• Fallidos: ' + result.failed + '\\n• Total: ' + result.total;
+    });
+  }
+}
+
+function menuFetchSinglePrice() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.prompt(
+    '📥 Descargar Precio',
+    'Introduce el simbolo del ticker (ej: AAPL):',
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() === ui.Button.OK) {
+    const ticker = response.getResponseText().trim().toUpperCase();
+
+    if (!ticker) {
+      ui.alert('❌ Error', 'Debes introducir un ticker.', ui.ButtonSet.OK);
+      return;
+    }
+
+    showProcessingAndRun('Descargando precio de ' + ticker + '...', function() {
+      const lookbackDays = getConfigValue(CONFIG_KEYS.PRICE_LOOKBACK_DAYS, 140);
+      const range = getYahooRangeForDays(lookbackDays);
+      const result = fetchPriceWithFallback_(ticker, range);
+
+      if (result.success && result.data && result.data.length > 0) {
+        const enhancedData = attachSMAs(result.data, [20, 50, 200]);
+        upsertRows(SHEET_NAMES.PRICES_DAILY, enhancedData, ['date', 'ticker']);
+        return 'Precio de ' + ticker + ' descargado: ' + result.data.length + ' barras.';
+      } else {
+        return 'Error descargando ' + ticker + ': ' + (result.error || 'Sin datos');
+      }
+    });
+  }
+}
+
+// ==================================================
+// FUNCIONES DEL MENU - VISION
+// ==================================================
+
+function menuDownloadImages() {
+  showProcessingAndRun('Descargando imagenes...', function() {
+    const date = getTodayDateStr();
+    const result = downloadImagesForCandidates(date);
+    return 'Imagenes descargadas:\\n• Descargadas: ' + result.downloaded + '\\n• Fallidas: ' + result.failed + '\\n• Omitidas: ' + result.skipped;
+  });
+}
+
+function menuRunVision() {
+  showProcessingAndRun('Analizando imagenes...', function() {
+    const date = getTodayDateStr();
+    const result = runVisionForNewImages(date);
+    return 'Vision completado:\\n• Analizadas: ' + result.analyzed + '\\n• Fallidas: ' + result.failed + '\\n• Omitidas: ' + result.skipped;
+  });
+}
+
+function menuRecomputeWithVision() {
+  showProcessingAndRun('Recalculando senales...', function() {
+    const date = getTodayDateStr();
+    recomputeSignalsWithVision(date);
+    return 'Senales recalculadas con datos de vision.';
+  });
+}
+
+// ==================================================
+// FUNCIONES DEL MENU - REPORTES
+// ==================================================
+
+function menuExportReport() {
+  showProcessingAndRun('Exportando reporte...', function() {
+    const date = getTodayDateStr();
+    exportDailyReport(date);
+    return 'Reporte exportado a hoja DAILY_REPORT_' + date.replace(/-/g, '');
+  });
+}
+
+function menuShowEnterSignals() {
+  const ui = SpreadsheetApp.getUi();
+  const signals = getTodayEnterSignals();
+
+  if (signals.length === 0) {
+    ui.alert('📈 Senales ENTER', 'No hay senales ENTER para hoy.', ui.ButtonSet.OK);
+    return;
+  }
+
+  let msg = '📈 Senales ENTER de Hoy (' + signals.length + '):\\n\\n';
+
+  for (let i = 0; i < Math.min(signals.length, 10); i++) {
+    const sig = signals[i];
+    msg += (i + 1) + '. ' + sig.etf + ' - Score: ' + sig.score + '\\n   ' + sig.reason + '\\n\\n';
+  }
+
+  if (signals.length > 10) {
+    msg += '... y ' + (signals.length - 10) + ' mas.';
+  }
+
+  ui.alert('📈 Senales ENTER', msg, ui.ButtonSet.OK);
+}
+
+function menuShowWatchSignals() {
+  const ui = SpreadsheetApp.getUi();
+  const signals = getTodayWatchSignals();
+
+  if (signals.length === 0) {
+    ui.alert('👀 Senales WATCH', 'No hay senales WATCH para hoy.', ui.ButtonSet.OK);
+    return;
+  }
+
+  let msg = '👀 Senales WATCH de Hoy (' + signals.length + '):\\n\\n';
+
+  for (let i = 0; i < Math.min(signals.length, 10); i++) {
+    const sig = signals[i];
+    msg += (i + 1) + '. ' + sig.etf + ' - Score: ' + sig.score + '\\n   ' + sig.reason + '\\n\\n';
+  }
+
+  if (signals.length > 10) {
+    msg += '... y ' + (signals.length - 10) + ' mas.';
+  }
+
+  ui.alert('👀 Senales WATCH', msg, ui.ButtonSet.OK);
+}
+
+function menuShowBudget() {
+  const ui = SpreadsheetApp.getUi();
+  const status = checkBudgetStatus();
+
+  let msg = '💰 Estado del Budget:\\n\\n';
+  msg += '📅 Fecha: ' + status.date + '\\n\\n';
+  msg += '📊 Uso de HTTP: ' + (status.counters.http_requests_total || 0) + '/' + status.limits.http_total + ' (' + status.percentUsed.http + '%)\\n';
+  msg += '   • Yahoo: ' + (status.counters.provider_requests_yahoo || 0) + '\\n';
+  msg += '   • Finnhub: ' + (status.counters.provider_requests_finnhub || 0) + '\\n';
+  msg += '   • FMP: ' + (status.counters.provider_requests_fmp || 0) + '/' + status.limits.fmp + ' (' + status.percentUsed.fmp + '%)\\n';
+  msg += '\\n👁️ Vision: ' + (status.counters.vision_requests || 0) + '/' + status.limits.vision + ' (' + status.percentUsed.vision + '%)\\n';
+
+  if (status.warnings.length > 0) {
+    msg += '\\n⚠️ Advertencias:\\n';
+    for (const warning of status.warnings) {
+      msg += '   • ' + warning + '\\n';
+    }
+  }
+
+  ui.alert('💰 Budget', msg, ui.ButtonSet.OK);
+}
+
+function menuShowHealth() {
+  const ui = SpreadsheetApp.getUi();
+  const health = verifySystemHealth();
+  const summary = getSystemSummary();
+
+  let msg = '🏥 Estado del Sistema:\\n\\n';
+  msg += '📅 ' + summary.timestamp + '\\n\\n';
+  msg += '📈 ETFs habilitados: ' + summary.etfsEnabled + '\\n';
+  msg += '🎯 Senales generadas: ' + summary.signalsGenerated + '\\n';
+  msg += '   • ENTER: ' + summary.currentEnter + '\\n';
+  msg += '   • WATCH: ' + summary.currentWatch + '\\n\\n';
+
+  msg += '🔌 APIs disponibles:\\n';
+  msg += '   • Yahoo: ' + (health.apiAvailability.yahoo === true ? '✅' : (health.apiAvailability.yahoo === false ? '❌' : '❓')) + '\\n';
+  msg += '   • Finnhub Candles: ' + (health.apiAvailability.finnhubCandles === true ? '✅' : (health.apiAvailability.finnhubCandles === false ? '❌' : '❓')) + '\\n';
+  msg += '   • Finnhub Holdings: ' + (health.apiAvailability.finnhubHoldings === true ? '✅' : (health.apiAvailability.finnhubHoldings === false ? '❌' : '❓')) + '\\n';
+  msg += '   • FMP: ' + (health.apiAvailability.fmp === true ? '✅' : (health.apiAvailability.fmp === false ? '❌' : '❓')) + '\\n\\n';
+
+  msg += '🔑 Configuracion:\\n';
+  msg += '   • Finnhub Token: ' + (health.config.hasFinnhubToken ? '✅' : '❌') + '\\n';
+  msg += '   • FMP Key: ' + (health.config.hasFmpKey ? '✅' : '❌') + '\\n';
+
+  ui.alert('🏥 Estado del Sistema', msg, ui.ButtonSet.OK);
+}
+
+// ==================================================
+// FUNCIONES DEL MENU - PRUEBAS
+// ==================================================
+
+function menuTestSingleEtf() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.prompt(
+    '🔬 Probar ETF',
+    'Introduce el simbolo del ETF a probar (ej: XLK):',
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() === ui.Button.OK) {
+    const etf = response.getResponseText().trim().toUpperCase() || 'XLK';
+
+    showProcessingAndRun('Probando ' + etf + '...', function() {
+      const result = testSingleEtf(etf);
+
+      let msg = '🔬 Resultado de prueba para ' + etf + ':\\n\\n';
+      msg += '🏢 Holdings: ' + (result.holdings.holdings ? result.holdings.holdings.length : 0) + ' posiciones\\n';
+      msg += '\\n📊 Breadth:\\n';
+      msg += '   • % > SMA20: ' + (result.breadth.pct_above_sma20 || 'N/A') + '%\\n';
+      msg += '   • % > SMA50: ' + (result.breadth.pct_above_sma50 || 'N/A') + '%\\n';
+      msg += '   • Z-score 20: ' + (result.breadth.z_pct_above_sma20 || 'N/A') + '\\n';
+      msg += '   • Extreme: ' + (result.breadth.extreme_flag ? '✅' : '❌') + '\\n';
+      msg += '   • Giro: ' + (result.breadth.giro_flag ? '✅' : '❌') + '\\n';
+      msg += '\\n📉 Tecnicos:\\n';
+      msg += '   • Soporte: ' + (result.tech.support_level || 'N/A') + '\\n';
+      msg += '   • Cerca de soporte: ' + (result.tech.near_support_flag ? '✅' : '❌') + '\\n';
+      msg += '   • Tendencia OK: ' + (result.tech.trend_flag ? '✅' : '❌') + '\\n';
+      msg += '\\n🎯 Senal: ' + result.signal.final_signal + ' (score: ' + result.signal.score + ')\\n';
+      msg += '   Razon: ' + result.signal.reason;
+
+      return msg;
+    });
+  }
+}
+
+function menuRunDryRun() {
+  showProcessingAndRun('Ejecutando Dry Run...', function() {
+    const result = runDryRun();
+    return 'Dry Run completado (sin llamadas API externas):\\n• Breadth: ' + result.breadth.success + '\\n• Tech: ' + result.tech.success + '\\n• Signals: ' + result.signals.enter + ' ENTER, ' + result.signals.watch + ' WATCH';
+  });
+}
+
+// ==================================================
+// FUNCIONES DEL MENU - MANTENIMIENTO
+// ==================================================
+
+function menuClearLogs() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '🗑️ Limpiar Logs',
+    '¿Deseas limpiar todos los logs?',
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response === ui.Button.YES) {
+    clearLogs();
+    ui.alert('✅ Exito', 'Logs limpiados.', ui.ButtonSet.OK);
+  }
+}
+
+function menuClearCache() {
+  clearHttpCache();
+  SpreadsheetApp.getUi().alert('✅ Exito', 'Cache HTTP limpiado.', SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+function menuReleaseLock() {
+  releaseLock_();
+  SpreadsheetApp.getUi().alert('✅ Exito', 'Lock de ejecucion liberado.', SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+function menuResetDataSheets() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '⚠️ ATENCION - Resetear Datos',
+    '¿Estas SEGURO de que quieres eliminar TODOS los datos de las hojas?\\n\\nEsta accion NO se puede deshacer.\\n\\nSe eliminaran: Holdings, Precios, Breadth, Tecnicos, Imagenes, Vision, Senales y Logs.',
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response === ui.Button.YES) {
+    const confirm = ui.alert(
+      '⚠️ CONFIRMAR',
+      'Escribe "CONFIRMAR" en el cuadro de texto para proceder.',
+      ui.ButtonSet.OK_CANCEL
+    );
+
+    // Por seguridad, pedimos doble confirmacion
+    if (confirm === ui.Button.OK) {
+      resetDataSheets();
+      ui.alert('✅ Completado', 'Todas las hojas de datos han sido reseteadas.', ui.ButtonSet.OK);
+    }
+  }
+}
+
+function menuRemoveTriggers() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '🗑️ Eliminar Triggers',
+    '¿Deseas eliminar todos los triggers automaticos?',
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response === ui.Button.YES) {
+    removeTriggers();
+    ui.alert('✅ Exito', 'Triggers eliminados.', ui.ButtonSet.OK);
+  }
+}
+
+// ==================================================
+// FUNCIONES DEL MENU - AYUDA
+// ==================================================
+
+function menuShowHelp() {
+  const ui = SpreadsheetApp.getUi();
+
+  const msg = `📖 AMPLITUD - Sistema de Swing Trading por Industrias
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 PRIMEROS PASOS:
+1. Usa "Configuracion > Inicializar Sistema"
+2. Configura tus API keys en la hoja CONFIG
+3. Ejecuta "Ejecutar > Pipeline Diario"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 HOJAS DEL SISTEMA:
+• CONFIG: Parametros de configuracion
+• ETFS: Lista de ETFs a monitorear
+• HOLDINGS_SNAPSHOT: Holdings de cada ETF
+• PRICES_DAILY: Precios con SMAs
+• BREADTH_DAILY: Metricas de amplitud
+• ETF_TECH_DAILY: Soportes y tendencias
+• SIGNALS: Senales de trading
+• LOG: Registro de operaciones
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 TIPOS DE SENALES:
+• ENTER: Todas las condiciones cumplidas
+• WATCH: Algunas condiciones, vigilar
+• NONE: No hay senal
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔑 API KEYS NECESARIAS:
+• FINNHUB_TOKEN: https://finnhub.io
+• FMP_KEY: https://financialmodelingprep.com
+• GCV_API_KEY: Google Cloud Vision (opcional)`;
+
+  ui.alert('❓ Ayuda', msg, ui.ButtonSet.OK);
+}
+
+function menuShowAbout() {
+  const ui = SpreadsheetApp.getUi();
+
+  const msg = `📊 AMPLITUD
+Sistema de Swing Trading por Industrias
+basado en Amplitud de Mercado
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Version: 1.0.0
+Fecha: 2026
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+El sistema analiza 31 ETFs sectoriales
+y sus holdings para detectar:
+
+• Extremos de amplitud (breadth)
+• Zonas de soporte tecnico
+• Senales de entrada potenciales
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Desarrollado con Google Apps Script`;
+
+  ui.alert('ℹ️ Acerca de', msg, ui.ButtonSet.OK);
+}
+
+// ==================================================
+// FUNCIONES AUXILIARES DEL MENU
+// ==================================================
+
+/**
+ * Muestra un mensaje de procesamiento y ejecuta una funcion.
+ * @param {string} processingMsg - Mensaje a mostrar
+ * @param {function} fn - Funcion a ejecutar
+ */
+function showProcessingAndRun(processingMsg, fn) {
+  const ui = SpreadsheetApp.getUi();
+
+  try {
+    const result = fn();
+    ui.alert('✅ Completado', result, ui.ButtonSet.OK);
+  } catch (e) {
+    ui.alert('❌ Error', 'Excepcion: ' + e.message, ui.ButtonSet.OK);
+  }
+}
 
 // ==================================================
 // SECCION 1: CONSTANTES Y CONFIGURACION

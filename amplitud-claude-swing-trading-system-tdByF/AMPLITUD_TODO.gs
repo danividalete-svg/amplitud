@@ -74,10 +74,11 @@ function onOpen() {
     .addSeparator()
 
     // --- SUBMENU: VISION (si esta habilitado) ---
-    .addSubMenu(ui.createMenu('👁️ Vision/Charts')
-      .addItem('📸 Descargar Imagenes Candidatos', 'menuDownloadImages')
-      .addItem('🔍 Analizar Imagenes con Vision', 'menuRunVision')
-      .addItem('🔄 Recalcular Senales con Vision', 'menuRecomputeWithVision'))
+    .addSubMenu(ui.createMenu('📈 Analisis de Patrones')
+      .addItem('🔍 Analizar Patrones de ETFs', 'menuAnalyzePatterns')
+      .addItem('🔄 Recalcular Senales con Patrones', 'menuRecomputeWithVision')
+      .addSeparator()
+      .addItem('📸 (Opcional) Descargar Charts', 'menuDownloadImages'))
 
     .addSeparator()
 
@@ -401,10 +402,34 @@ function menuFetchSinglePrice() {
 }
 
 // ==================================================
-// FUNCIONES DEL MENU - VISION
+// FUNCIONES DEL MENU - ANALISIS DE PATRONES
 // ==================================================
 
+function menuAnalyzePatterns() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '📈 Analizar Patrones',
+    '¿Analizar patrones tecnicos de los ETFs candidatos?\\n\\nEste analisis es 100% GRATUITO (usa datos OHLC, no requiere APIs externas).\\n\\nDetecta: Hammer, Engulfing, Doji, RSI, Cruces de SMA, Soportes, etc.',
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response === ui.Button.YES) {
+    showProcessingAndRun('Analizando patrones...', function() {
+      const date = getTodayDateStr();
+      const result = runPatternAnalysisForCandidates(date);
+      return 'Analisis de patrones completado:\\n• Analizados: ' + result.analyzed + '\\n• Fallidos: ' + result.failed;
+    });
+  }
+}
+
 function menuDownloadImages() {
+  const ui = SpreadsheetApp.getUi();
+  ui.alert(
+    '📸 Descargar Charts',
+    'Esta funcion descarga imagenes de charts desde Finviz.\\n\\nNOTA: Es opcional y solo para referencia visual.\\nEl analisis de patrones funciona sin imagenes.',
+    ui.ButtonSet.OK
+  );
+
   showProcessingAndRun('Descargando imagenes...', function() {
     const date = getTodayDateStr();
     const result = downloadImagesForCandidates(date);
@@ -412,19 +437,11 @@ function menuDownloadImages() {
   });
 }
 
-function menuRunVision() {
-  showProcessingAndRun('Analizando imagenes...', function() {
-    const date = getTodayDateStr();
-    const result = runVisionForNewImages(date);
-    return 'Vision completado:\\n• Analizadas: ' + result.analyzed + '\\n• Fallidas: ' + result.failed + '\\n• Omitidas: ' + result.skipped;
-  });
-}
-
 function menuRecomputeWithVision() {
   showProcessingAndRun('Recalculando senales...', function() {
     const date = getTodayDateStr();
     recomputeSignalsWithVision(date);
-    return 'Senales recalculadas con datos de vision.';
+    return 'Senales recalculadas con datos de patrones.';
   });
 }
 
@@ -683,7 +700,9 @@ function menuShowHelp() {
 🔑 API KEYS NECESARIAS:
 • FINNHUB_TOKEN: https://finnhub.io
 • FMP_KEY: https://financialmodelingprep.com
-• GCV_API_KEY: Google Cloud Vision (opcional)`;
+
+NOTA: NO necesitas GCV_API_KEY - el analisis de patrones
+usa datos OHLC (100% gratuito, sin APIs de pago).`;
 
   ui.alert('❓ Ayuda', msg, ui.ButtonSet.OK);
 }
@@ -4275,48 +4294,16 @@ function analyzeImageWithVision(ticker, timeframe, date) {
   };
 }
 
+/**
+ * NOTA: Google Cloud Vision OCR ha sido REMOVIDO porque requiere pago.
+ * El sistema ahora usa SOLO analisis de patrones basado en datos OHLC,
+ * que es 100% GRATUITO y no requiere APIs externas.
+ *
+ * La funcion se mantiene por compatibilidad pero siempre retorna vacio.
+ */
 function callGoogleVisionOCR(driveFileId) {
-  const apiKey = getConfigValue(CONFIG_KEYS.GCV_API_KEY, '');
-
-  if (!apiKey) {
-    return { success: false, text: '', error: 'GCV_API_KEY not configured' };
-  }
-
-  try {
-    const base64Image = getImageBase64(driveFileId);
-
-    if (!base64Image) {
-      return { success: false, text: '', error: 'Could not read image from Drive' };
-    }
-
-    incrementBudgetCounter_('vision_requests');
-
-    const requestBody = {
-      requests: [{
-        image: { content: base64Image },
-        features: [{ type: 'TEXT_DETECTION', maxResults: 10 }]
-      }]
-    };
-
-    const url = fillUrlTemplate(API_ENDPOINTS.GOOGLE_VISION, { KEY: apiKey });
-    const response = httpPost(url, requestBody);
-
-    if (!response.success) {
-      return { success: false, text: '', error: response.error };
-    }
-
-    const json = JSON.parse(response.body);
-
-    if (json.responses && json.responses[0] && json.responses[0].fullTextAnnotation) {
-      return { success: true, text: json.responses[0].fullTextAnnotation.text || '', error: null };
-    }
-
-    return { success: true, text: '', error: null };
-
-  } catch (e) {
-    logException('vision', 'callGoogleVisionOCR', e);
-    return { success: false, text: '', error: e.message };
-  }
+  // OCR deshabilitado - usamos solo analisis de patrones OHLC (gratuito)
+  return { success: false, text: '', error: 'OCR disabled - using OHLC pattern analysis instead (free)' };
 }
 
 function computePatternHeuristicsFromOHLC(ticker, timeframe) {
@@ -4505,6 +4492,67 @@ function combineVisionResults_(ocrText, ocrSuccess, patternResult) {
     score: Math.round(score * 1000) / 1000,
     verdict: verdict
   };
+}
+
+/**
+ * Analiza patrones tecnicos para ETFs candidatos usando SOLO datos OHLC.
+ * 100% GRATUITO - No requiere APIs externas.
+ * @param {string} date - Fecha a analizar
+ * @returns {Object} Resumen del analisis
+ */
+function runPatternAnalysisForCandidates(date) {
+  date = date || getTodayDateStr();
+
+  logOperationStart('runPatternAnalysisForCandidates', { date });
+
+  const signals = getRankedSignals(date);
+  const candidates = signals.filter(s =>
+    s.final_signal === SIGNAL_TYPES.ENTER || s.final_signal === SIGNAL_TYPES.WATCH
+  ).slice(0, 15);
+
+  let analyzed = 0;
+  let failed = 0;
+
+  for (const signal of candidates) {
+    const ticker = signal.etf;
+
+    try {
+      // Analiza patrones directamente desde OHLC (sin imagenes, sin OCR)
+      const patternResult = computePatternHeuristicsFromOHLC(ticker, 'D');
+
+      const visionRow = {
+        date: date,
+        ticker: ticker,
+        timeframe: 'D',
+        ocr_text: '',
+        pattern_labels: JSON.stringify(patternResult.patterns),
+        pattern_score: patternResult.score,
+        verdict: patternResult.score >= 0.65 ? VISION_VERDICTS.BULLISH :
+                 patternResult.score >= 0.45 ? VISION_VERDICTS.NEUTRAL :
+                 VISION_VERDICTS.BEARISH,
+        notes_json: JSON.stringify({
+          method: 'OHLC_HEURISTICS',
+          bullishCount: patternResult.bullishCount,
+          bearishCount: patternResult.bearishCount,
+          noApiRequired: true
+        })
+      };
+
+      upsertRows(SHEET_NAMES.VISION_SIGNALS, [visionRow], ['date', 'ticker', 'timeframe']);
+
+      logInfo('patterns', `${ticker}: ${patternResult.patterns.length} patterns, score=${patternResult.score}, verdict=${visionRow.verdict}`);
+      analyzed++;
+
+    } catch (e) {
+      logException('patterns', `analyzePatterns(${ticker})`, e);
+      failed++;
+    }
+  }
+
+  const summary = { analyzed, failed };
+  logOperationEnd('runPatternAnalysisForCandidates', summary);
+
+  return summary;
 }
 
 function runVisionForNewImages(date) {
@@ -5121,9 +5169,9 @@ function setupDefaultConfig() {
   }
 
   const apiKeyPlaceholders = [
-    [CONFIG_KEYS.FINNHUB_TOKEN, '', 'Get from https://finnhub.io/'],
-    [CONFIG_KEYS.FMP_KEY, '', 'Get from https://financialmodelingprep.com/'],
-    [CONFIG_KEYS.GCV_API_KEY, '', 'Get from Google Cloud Console (Vision API)']
+    [CONFIG_KEYS.FINNHUB_TOKEN, '', 'Get from https://finnhub.io/ (free tier available)'],
+    [CONFIG_KEYS.FMP_KEY, '', 'Get from https://financialmodelingprep.com/ (free tier: 250 calls/day)']
+    // GCV_API_KEY ya NO es necesario - usamos analisis de patrones OHLC (gratuito)
   ];
 
   for (const [key, value, note] of apiKeyPlaceholders) {
